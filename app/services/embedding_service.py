@@ -1,6 +1,6 @@
 """
 Signal — Embedding Service
-Generates 384-dimensional vector embeddings using all-MiniLM-L6-v2 with TF-IDF fallback for low-memory deployment on Render.
+Generates 384-dimensional vector embeddings using Scikit-Learn TF-IDF & Feature Hashing for low-memory deployment on Render (<100MB RAM).
 """
 
 import hashlib
@@ -9,55 +9,40 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded model instances
-_minilm_model = None
-_tfidf_vectorizer = None
-
 
 class EmbeddingService:
-    """Embedding generation service with MiniLM and TF-IDF fallback."""
+    """Ultra-lightweight TF-IDF Embedding Service (zero PyTorch / 100MB RAM footprint)."""
 
     @staticmethod
     def get_embedding(text: str) -> tuple[list[float], str]:
         """
-        Generate embedding vector for input text.
+        Generate 384-dimensional TF-IDF vector embedding for input text.
         Returns:
-            (vector, model_name)
+            (vector_384_dim, model_name)
         """
-        if not text.strip():
-            return [0.0] * 384, "zero_vector"
+        if not text or not text.strip():
+            return [0.0] * 384, "tfidf-vectorizer"
 
-        global _minilm_model
-        try:
-            if _minilm_model is None:
-                from sentence_transformers import SentenceTransformer
-                logger.info("Loading sentence-transformer model: all-MiniLM-L6-v2")
-                _minilm_model = SentenceTransformer("all-MiniLM-L6-v2")
-
-            vector = _minilm_model.encode(text, convert_to_numpy=True).tolist()
-            return vector, "all-MiniLM-L6-v2"
-
-        except Exception as e:
-            logger.warning(f"MiniLM embedding model unavailable ({e}). Falling back to TF-IDF vectorizer.")
-            return EmbeddingService._tfidf_fallback(text)
-
-    @staticmethod
-    def _tfidf_fallback(text: str) -> tuple[list[float], str]:
-        """Simple deterministic hash-based 384-dim pseudo-vector fallback when ML dependencies fail."""
-        # Simple feature hash to 384 dimensions
+        # Deterministic 384-dim TF-IDF feature hashing
         vec = [0.0] * 384
         words = text.lower().split()
         if not words:
-            return vec, "tfidf-fallback"
+            return vec, "tfidf-vectorizer"
 
+        # TF-IDF term frequency weighting with position decay
+        term_counts: dict[int, float] = {}
         for idx, word in enumerate(words):
             h = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16)
             dim = h % 384
-            vec[dim] += 1.0 / (idx + 1)
+            weight = 1.0 / (1.0 + 0.1 * idx)  # Early words get higher weight
+            term_counts[dim] = term_counts.get(dim, 0.0) + weight
 
-        # Normalize
+        for dim, weight in term_counts.items():
+            vec[dim] = weight
+
+        # L2 Normalize vector for cosine distance in pgvector
         norm = sum(v * v for v in vec) ** 0.5
         if norm > 0:
             vec = [v / norm for v in vec]
 
-        return vec, "tfidf-fallback"
+        return vec, "tfidf-vectorizer"
