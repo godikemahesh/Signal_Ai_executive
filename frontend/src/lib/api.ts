@@ -1,6 +1,9 @@
 import { Signal, Entity, TimelineEvent } from './data';
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '') : '';
+const DEFAULT_PROD_URL = 'https://signal-ai-executive.onrender.com';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL
+  ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
+  : (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app') ? DEFAULT_PROD_URL : '');
 const API_BASE_URL = `${BASE_URL}/api/v1`;
 
 function getAuthHeader(): Record<string, string> {

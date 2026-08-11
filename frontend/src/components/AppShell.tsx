@@ -78,6 +78,8 @@ export const AppShell: React.FC<AppShellProps> = ({ userProfile, onLogout }) => 
         const url = new URL(import.meta.env.VITE_API_BASE_URL);
         const wsProtocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
         wsUrl = `${wsProtocol}//${url.host}/ws`;
+      } else if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
+        wsUrl = 'wss://signal-ai-executive.onrender.com/ws';
       } else {
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         wsUrl = `${wsProtocol}//${window.location.hostname}:8000/ws`;
