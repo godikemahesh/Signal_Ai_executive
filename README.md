@@ -1,4 +1,4 @@
-# Signal — Personal AI Executive Assistant
+# Signal — AI Email Executive Assistant
 
 <div align="center">
 
