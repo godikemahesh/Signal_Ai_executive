@@ -1,0 +1,6 @@
+{
+  "name": "Signal",
+  "description": "Personal AI Executive Assistant dashboard that reads Gmail and surfaces critical signals, actions, and insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

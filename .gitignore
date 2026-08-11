@@ -1,0 +1,6 @@
+*__pycache__/
+.env
+*.docx
+node_modules/
+*.sql
+signal_project_document.md 
