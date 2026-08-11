@@ -88,16 +88,20 @@ app.add_middleware(
 app.include_router(api_v1_router)
 app.include_router(websocket_router)
 
-
+@app.head("/")
+@app.head("/health")
+@app.get("/", tags=["Health"])
 @app.get("/health", tags=["Health"])
 async def health_check():
     """Application health check endpoint."""
     return {
         "status": "healthy",
+        "message": "Signal AI Executive Assistant Backend is active and running",
         "app": settings.app_name,
         "environment": settings.app_env,
         "primary_llm": settings.primary_llm_provider,
         "fallback_llm": settings.fallback_llm_provider,
+        "docs_url": "/docs",
     }
 
 
