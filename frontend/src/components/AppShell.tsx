@@ -108,12 +108,20 @@ export const AppShell: React.FC<AppShellProps> = ({ userProfile, onLogout }) => 
     };
   }, []);
 
-  // Compute live stats for stats bar
-  const newCount = signals.filter((s) => s.status === 'new').length;
-  const changedCount = signals.filter((s) => s.status === 'changed').length;
-  const archivedCount = signals.filter((s) => s.bucket === 'ignored' || s.bucket === 'completed').length;
-  const totalCount = overviewData?.stats?.total_signals || signals.length;
-  const decisionsCount = overviewData?.stats?.decisions || signals.filter((s) => s.bucket === 'do-now').length;
+  // Compute live stats for stats bar matching overviewData accuracy
+  const rawNeedsAction = overviewData?.needs_action?.length
+    ? overviewData.needs_action
+    : signals.filter((s) => s.bucket === 'do-now' || s.bucket === 'today');
+
+  const needsActionCount = rawNeedsAction.filter(
+    (s: Signal) => s.bucket !== 'completed' && s.bucket !== 'ignored'
+  ).length;
+
+  const newCount = overviewData?.stats?.new ?? needsActionCount;
+  const changedCount = overviewData?.stats?.changed ?? 0;
+  const archivedCount = overviewData?.stats?.archived ?? signals.filter((s) => s.bucket === 'ignored' || s.bucket === 'completed').length;
+  const totalCount = overviewData?.stats?.total_signals ?? signals.length;
+  const decisionsCount = overviewData?.stats?.decisions ?? needsActionCount;
 
   const handleMoveBucket = async (id: string, newBucket: Signal['bucket']) => {
     // 1. Optimistic UI update for signals state
