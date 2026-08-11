@@ -29,6 +29,12 @@ async def google_callback(code: str = Query(...), db: AsyncSession = Depends(get
     try:
         res = await AuthService.process_google_callback(code, db)
         token = res["access_token"]
+
+        from app.config import get_settings
+        settings = get_settings()
+        target_frontend = settings.frontend_url or (settings.cors_origins_list[0] if settings.cors_origins_list else "http://localhost:5173")
+        target_frontend = target_frontend.rstrip('/')
+
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -46,13 +52,20 @@ async def google_callback(code: str = Query(...), db: AsyncSession = Depends(get
                 <p>Redirecting to Signal Executive Assistant...</p>
                 <script>
                     localStorage.setItem('signal_token', '{token}');
-                    var targetOrigin = window.location.origin.includes('localhost') 
-                        ? (document.referrer.includes('5173') ? 'http://localhost:5173' : 'http://localhost:3000')
-                        : window.location.origin;
-                    window.location.href = targetOrigin + '/?token={token}';
+                    var defaultFrontend = '{target_frontend}';
+                    var referrer = document.referrer;
+                    var targetUrl = defaultFrontend;
+
+                    if (referrer && (referrer.includes('vercel.app') || referrer.includes('localhost') || referrer.includes('5173') || referrer.includes('3000'))) {{
+                        try {{
+                            targetUrl = new URL(referrer).origin;
+                        }} catch (e) {{}}
+                    }}
+
+                    window.location.href = targetUrl + '/?token={token}';
                 </script>
                 <p style="margin-top: 1rem; font-size: 0.85rem; color: #94a3b8;">
-                    If you are not redirected automatically, <a href="/?token={token}">Click here to open Signal</a>
+                    If you are not redirected automatically, <a href="{target_frontend}/?token={token}">Click here to open Signal Frontend</a>
                 </p>
             </div>
         </body>
