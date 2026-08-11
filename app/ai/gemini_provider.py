@@ -35,7 +35,12 @@ class GeminiLLMProvider(BaseLLMProvider):
         temperature: float = 0.2,
     ) -> dict[str, Any]:
         """Generate structured JSON response using Gemini."""
-        candidate_models = [self.model_name, "gemini-2.0-flash", "gemini-1.5-flash"]
+        raw_candidates = [self.model_name, "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]
+        candidate_models = []
+        for m in raw_candidates:
+            if m not in candidate_models:
+                candidate_models.append(m)
+
         last_exception = None
 
         for m_name in candidate_models:
@@ -71,7 +76,12 @@ class GeminiLLMProvider(BaseLLMProvider):
         temperature: float = 0.3,
     ) -> str:
         """Generate text response using Gemini."""
-        candidate_models = [self.model_name, "gemini-2.0-flash", "gemini-1.5-flash"]
+        raw_candidates = [self.model_name, "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]
+        candidate_models = []
+        for m in raw_candidates:
+            if m not in candidate_models:
+                candidate_models.append(m)
+
         last_exception = None
 
         for m_name in candidate_models:

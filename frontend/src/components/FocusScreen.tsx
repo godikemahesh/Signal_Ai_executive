@@ -29,10 +29,12 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
     { key: 'ignored', label: 'Ignored', icon: <Ghost className="w-3.5 h-3.5 text-slate-400" />, color: '#94A3B8' },
   ];
 
-  const filteredSignals = signals.filter((s) => s.bucket === activeBucket);
+  const normalizeBucket = (b?: string) => (b || '').replace('_', '-');
+
+  const filteredSignals = signals.filter((s) => normalizeBucket(s.bucket) === normalizeBucket(activeBucket));
 
   const getBorderColorClass = (bucket: Signal['bucket']) => {
-    switch (bucket) {
+    switch (normalizeBucket(bucket)) {
       case 'do-now': return 'border-l-4 border-l-rose-600';
       case 'today': return 'border-l-4 border-l-amber-500';
       case 'this-week': return 'border-l-4 border-l-blue-600';
@@ -63,7 +65,7 @@ export const FocusScreen: React.FC<FocusScreenProps> = ({
       {/* Bucket Filter Pills */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar">
         {buckets.map((b) => {
-          const count = signals.filter((s) => s.bucket === b.key).length;
+          const count = signals.filter((s) => normalizeBucket(s.bucket) === normalizeBucket(b.key)).length;
           const isActive = activeBucket === b.key;
 
           return (

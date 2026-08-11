@@ -51,6 +51,10 @@ export function transformBackendSignal(raw: any): Signal {
   const detectedDeadline = raw.detected_deadlines?.[0];
   const deadlineText = detectedDeadline?.description || (detectedDeadline?.date ? `Due ${new Date(detectedDeadline.date).toLocaleDateString()}` : undefined);
 
+  let rawBucket = (raw.bucket || 'today').replace('_', '-');
+  if (rawBucket === 'donow') rawBucket = 'do-now';
+  if (rawBucket === 'thisweek') rawBucket = 'this-week';
+
   return {
     id: raw.id,
     subject: raw.subject || '(No Subject)',
@@ -58,7 +62,7 @@ export function transformBackendSignal(raw: any): Signal {
     senderEmail: raw.sender_email || '',
     preview: raw.summary || raw.snippet || '(No preview content)',
     category: raw.extracted_metadata?.category || 'personal',
-    bucket: (raw.bucket || 'today') as Signal['bucket'],
+    bucket: rawBucket as Signal['bucket'],
     status: raw.is_read ? 'stable' : 'new',
     priority: raw.priority_score || 50,
     actionType: actionTypeMap[detectedAction] || 'no-action',
@@ -117,14 +121,16 @@ export const api = {
   },
 
   getSignalsByBucket: async (bucket: string): Promise<Signal[]> => {
-    const data = await request<any[]>(`/focus/${bucket}`);
+    const backendBucket = bucket.replace('-', '_');
+    const data = await request<any[]>(`/focus/${backendBucket}`);
     return data.map(transformBackendSignal);
   },
 
   moveSignalBucket: async (signalId: string, newBucket: string, reason?: string): Promise<Signal> => {
+    const backendBucket = newBucket.replace('-', '_');
     const data = await request<any>(`/focus/${signalId}/move`, {
       method: 'PATCH',
-      body: JSON.stringify({ new_bucket: newBucket, reason }),
+      body: JSON.stringify({ new_bucket: backendBucket, reason }),
     });
     return transformBackendSignal(data);
   },

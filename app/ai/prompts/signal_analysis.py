@@ -59,10 +59,11 @@ def build_signal_analysis_prompt(
     body_text: str,
     received_at: str,
 ) -> str:
+    cleaned_body = (body_text or "").strip()[:3500]
     return f"""Analyze this sanitized email signal received at {received_at}:
 
 Sender: {sender_name} <{sender_email}>
 Subject: {subject}
 Content:
-{body_text}
+{cleaned_body}
 """
