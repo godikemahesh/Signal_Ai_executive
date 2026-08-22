@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import BUCKET_COMPLETED, BUCKET_DO_NOW, BUCKET_IGNORED, BUCKET_TODAY
 from app.models.signal import Signal
 from app.models.user import UserProfile
+from app.repositories import get_signal_repository, get_user_repository
 from app.schemas.overview import HandledAutomaticallySummary, HandledCategoryItem, OverviewResponse, OverviewStats
 
 
@@ -21,14 +22,11 @@ class OverviewService:
     async def get_overview(db: AsyncSession, user: UserProfile) -> OverviewResponse:
         """Fetch live command center overview with real database stats."""
         now = datetime.now(timezone.utc)
+        signal_repo = get_signal_repository(db=db)
+        user_repo = get_user_repository(db=db)
 
         # Fetch all active signals for user
-        all_signals_res = await db.execute(
-            select(Signal)
-            .where(Signal.user_id == user.id, Signal.is_deleted == False)
-            .order_by(Signal.received_at.desc())
-        )
-        all_signals = list(all_signals_res.scalars().all())
+        all_signals = await signal_repo.list_by_user(user.id, is_deleted=False, order_by="received_at", descending=True)
 
         # Filter categories dynamically
         needs_action = [
@@ -152,7 +150,7 @@ class OverviewService:
 
         # Update last_visit_at timestamp
         user.last_visit_at = now
-        await db.commit()
+        await user_repo.update(user)
 
         return OverviewResponse(
             greeting=f"hey, {greeting_name}.",
@@ -164,4 +162,5 @@ class OverviewService:
             handled_automatically=handled,
             last_updated=now,
         )
+
 

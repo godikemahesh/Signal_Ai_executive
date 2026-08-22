@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.core.security import create_jwt_token
 from app.models.gmail import GmailAccount
 from app.models.user import UserProfile
+from app.repositories import get_gmail_account_repository, get_user_repository
 
 settings = get_settings()
 
@@ -77,9 +78,9 @@ class AuthService:
             display_name = user_info.get("name")
             avatar_url = user_info.get("picture")
 
-        # Get or create single user profile
-        result = await db.execute(select(UserProfile).where(UserProfile.email == email))
-        user = result.scalar_one_or_none()
+        # 1. Get or create user profile via repository abstraction
+        user_repo = get_user_repository(db=db)
+        user = await user_repo.get_by_email(email)
 
         if not user:
             user = UserProfile(
@@ -88,16 +89,16 @@ class AuthService:
                 display_name=display_name,
                 avatar_url=avatar_url,
             )
-            db.add(user)
-            await db.flush()
+            user = await user_repo.create(user)
         else:
             user.display_name = display_name or user.display_name
             user.avatar_url = avatar_url or user.avatar_url
             user.google_id = google_id or user.google_id
+            user = await user_repo.update(user)
 
-        # Update connected Gmail account
-        gmail_res = await db.execute(select(GmailAccount).where(GmailAccount.user_id == user.id))
-        gmail_acc = gmail_res.scalar_one_or_none()
+        # 2. Update connected Gmail account via repository abstraction
+        gmail_repo = get_gmail_account_repository(db=db)
+        gmail_acc = await gmail_repo.get_by_user_id(user.id)
 
         token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
         if not gmail_acc:
@@ -108,17 +109,15 @@ class AuthService:
                 refresh_token=refresh_token,
                 token_expires_at=token_expires_at,
             )
-            db.add(gmail_acc)
+            await gmail_repo.create(gmail_acc)
         else:
             gmail_acc.access_token = access_token
             if refresh_token:
                 gmail_acc.refresh_token = refresh_token
             gmail_acc.token_expires_at = token_expires_at
+            await gmail_repo.update(gmail_acc)
 
-        await db.commit()
-        await db.refresh(user)
-
-        # Generate app JWT token
+        # 3. Generate app JWT token
         jwt_token = create_jwt_token(
             data={"sub": str(user.id), "email": user.email},
             secret_key=settings.jwt_secret,

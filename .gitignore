@@ -3,4 +3,6 @@
 *.docx
 node_modules/
 *.sql
-signal_project_document.md 
+signal_project_document.md
+scratch/
+ 

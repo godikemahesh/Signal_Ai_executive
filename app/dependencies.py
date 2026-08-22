@@ -12,6 +12,7 @@ from app.config import Settings, get_settings
 from app.core.security import decode_jwt_token
 from app.database import get_db
 from app.models.user import UserProfile
+from app.repositories.user_repo import get_user_repository
 
 security_scheme = HTTPBearer(auto_error=False)
 
@@ -44,8 +45,8 @@ async def get_current_user(
             detail="Invalid token payload",
         )
 
-    result = await db.execute(select(UserProfile).where(UserProfile.id == user_id))
-    user = result.scalar_one_or_none()
+    user_repo = get_user_repository(db=db)
+    user = await user_repo.get_by_id(user_id)
 
     if user is None:
         raise HTTPException(

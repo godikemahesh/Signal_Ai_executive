@@ -4,7 +4,6 @@ Returns human-readable priority buckets (Do now, Today, This week, Waiting, Comp
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from uuid import UUID
@@ -14,6 +13,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.signal import Signal
 from app.models.user import UserProfile
+from app.repositories import get_signal_repository
 from app.schemas.focus import FocusViewResponse, MoveBucketRequest
 from app.schemas.signal import SignalResponse
 from app.services.behavior_engine import BehaviorEngine
@@ -58,12 +58,10 @@ async def move_signal_bucket(
     if body.new_bucket not in ALL_BUCKETS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid bucket")
 
-    res = await db.execute(
-        select(Signal).where(Signal.id == signal_id, Signal.user_id == user.id)
-    )
-    signal = res.scalar_one_or_none()
+    signal_repo = get_signal_repository(db=db)
+    signal = await signal_repo.get_by_id(signal_id)
 
-    if not signal:
+    if not signal or str(signal.user_id) != str(user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Signal not found")
 
     old_bucket = signal.bucket
@@ -80,6 +78,6 @@ async def move_signal_bucket(
         metadata={"from_bucket": old_bucket, "to_bucket": body.new_bucket},
     )
 
-    await db.commit()
-    await db.refresh(signal)
-    return SignalResponse.model_validate(signal)
+    updated_signal = await signal_repo.update(signal)
+    return SignalResponse.model_validate(updated_signal)
+

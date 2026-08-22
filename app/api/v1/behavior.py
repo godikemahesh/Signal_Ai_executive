@@ -5,7 +5,6 @@ Returns live behavioral learning metrics and insights calculated from user inter
 
 from typing import Any
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import BUCKET_IGNORED
@@ -14,6 +13,7 @@ from app.dependencies import get_current_user
 from app.models.behavior import BehaviorInteraction, SenderProfile
 from app.models.signal import Signal
 from app.models.user import UserProfile
+from app.repositories import get_sender_profile_repository, get_signal_repository
 
 router = APIRouter(prefix="/behavior", tags=["Behavior"])
 
@@ -25,30 +25,17 @@ async def get_behavior_insights(
 ):
     """Fetch live behavioral metrics and active learned heuristics from sender history."""
     # 1. Total Signals and Filtered Count
-    total_signals_res = await db.execute(
-        select(func.count(Signal.id)).where(
-            Signal.user_id == current_user.id, Signal.is_deleted == False
-        )
-    )
-    total_signals = total_signals_res.scalar() or 0
-
-    archived_res = await db.execute(
-        select(func.count(Signal.id)).where(
-            Signal.user_id == current_user.id,
-            Signal.is_deleted == False,
-            (Signal.is_archived == True) | (Signal.bucket == BUCKET_IGNORED),
-        )
-    )
-    archived_count = archived_res.scalar() or 0
+    signal_repo = get_signal_repository(db=db)
+    total_signals = await signal_repo.count_total(current_user.id, is_deleted=False)
+    archived_count = await signal_repo.count_filtered(current_user.id, is_archived=True, is_deleted=False)
 
     auto_filtered_pct = round((archived_count / total_signals * 100), 1) if total_signals > 0 else 84.2
     time_saved_hours = round((archived_count * 3) / 60, 1) if archived_count > 0 else 4.5
 
-    # 2. Fetch Sender Profiles (Learned Rules)
-    sender_res = await db.execute(
-        select(SenderProfile).order_by(SenderProfile.total_received.desc()).limit(20)
-    )
-    sender_profiles = list(sender_res.scalars().all())
+    # 2. Fetch Sender Profiles (Learned Rules) via repository abstraction
+    sender_repo = get_sender_profile_repository(db=db)
+    sender_profiles = await sender_repo.list_top(limit=20)
+
 
     insights = []
     rule_index = 1

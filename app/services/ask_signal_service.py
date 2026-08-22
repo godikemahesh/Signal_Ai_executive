@@ -13,6 +13,11 @@ from app.ai.prompts.ask_signal import ASK_SIGNAL_SYSTEM_INSTRUCTION, build_ask_s
 from app.models.ai_decision import AskSignalHistory
 from app.models.entity import Entity
 from app.models.signal import Signal
+from app.repositories import (
+    get_ask_signal_history_repository,
+    get_entity_repository,
+    get_signal_repository,
+)
 from app.schemas.ask import AskSignalResponse
 from app.services.embedding_service import EmbeddingService
 
@@ -24,15 +29,12 @@ class AskSignalService:
     async def ask(db: AsyncSession, user_id: UUID, query: str) -> AskSignalResponse:
         """Process user NLQ and synthesize a structured response."""
         start_time = time.time()
+        entity_repo = get_entity_repository(db=db)
+        signal_repo = get_signal_repository(db=db)
+        history_repo = get_ask_signal_history_repository(db=db)
 
         # 1. Fetch top active entities
-        entity_res = await db.execute(
-            select(Entity)
-            .where(Entity.user_id == user_id)
-            .order_by(Entity.last_updated_at.desc())
-            .limit(10)
-        )
-        entities = list(entity_res.scalars().all())
+        entities = await entity_repo.list_by_user(user_id, order_by="last_updated_at", descending=True, limit=10)
 
         entities_text = "\n".join(
             [f"- {e.name} ({e.entity_type}): {e.current_state or 'Active'}" for e in entities]
@@ -41,13 +43,7 @@ class AskSignalService:
         # 2. Vector embedding & similarity query or keyword fallback
         vec, model_name = EmbeddingService.get_embedding(query)
         
-        signal_res = await db.execute(
-            select(Signal)
-            .where(Signal.user_id == user_id, Signal.is_deleted == False)
-            .order_by(Signal.received_at.desc())
-            .limit(10)
-        )
-        signals = list(signal_res.scalars().all())
+        signals = await signal_repo.list_by_user(user_id, is_deleted=False, order_by="received_at", descending=True, limit=10)
 
         signals_text = "\n".join(
             [f"- From: {s.sender_name} | Subject: {s.subject} | Summary: {s.summary}" for s in signals]
@@ -68,7 +64,7 @@ class AskSignalService:
 
         elapsed_ms = int((time.time() - start_time) * 1000)
 
-        # 4. Save to history
+        # 4. Save to history via repository abstraction
         sig_ids = [s.id for s in signals]
         ent_ids = [e.id for e in entities]
         history = AskSignalHistory(
@@ -82,8 +78,10 @@ class AskSignalService:
             processing_time_ms=elapsed_ms,
             model_used=llm.primary_name,
         )
-        db.add(history)
-        await db.commit()
+        try:
+            await history_repo.create(history)
+        except Exception:
+            pass
 
         return AskSignalResponse(
             query=query,
@@ -93,3 +91,4 @@ class AskSignalService:
             entities_referenced=ent_ids,
             processing_time_ms=elapsed_ms,
         )
+

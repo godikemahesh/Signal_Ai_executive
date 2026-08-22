@@ -16,6 +16,7 @@ from app.core.constants import (
     BUCKET_WAITING,
 )
 from app.models.signal import Signal
+from app.repositories import get_signal_repository
 from app.schemas.focus import BucketSummary, FocusViewResponse
 
 
@@ -34,12 +35,8 @@ class FocusService:
     @staticmethod
     async def get_buckets_summary(db: AsyncSession, user_id: UUID) -> FocusViewResponse:
         """Fetch signal counts for all focus buckets."""
-        counts_res = await db.execute(
-            select(Signal.bucket, func.count(Signal.id))
-            .where(Signal.user_id == user_id, Signal.is_deleted == False)
-            .group_by(Signal.bucket)
-        )
-        counts_map = dict(counts_res.all())
+        signal_repo = get_signal_repository(db=db)
+        counts_map = await signal_repo.count_by_bucket(user_id)
 
         buckets = []
         for b_name, b_label, b_desc in FocusService.BUCKET_METADATA:
@@ -57,9 +54,6 @@ class FocusService:
     @staticmethod
     async def get_signals_by_bucket(db: AsyncSession, user_id: UUID, bucket: str) -> list[Signal]:
         """Fetch signals in a specific bucket."""
-        res = await db.execute(
-            select(Signal)
-            .where(Signal.user_id == user_id, Signal.bucket == bucket, Signal.is_deleted == False)
-            .order_by(Signal.priority_score.desc(), Signal.received_at.desc())
-        )
-        return list(res.scalars().all())
+        signal_repo = get_signal_repository(db=db)
+        return await signal_repo.list_by_bucket(user_id, bucket, is_deleted=False)
+

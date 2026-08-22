@@ -13,6 +13,9 @@ sqlalchemy[asyncio]==2.0.31
 asyncpg>=0.29.0
 alembic==1.13.2
 pgvector==0.3.2
+deltalake>=1.6.0
+pyarrow>=18.0.0
+msal>=1.30.0
 
 # Authentication
 google-auth==2.32.0

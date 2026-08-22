@@ -34,8 +34,10 @@ class PriorityScorer:
             return 10, BUCKET_IGNORED, "Auto-archived promotional signal"
 
         # Base score weighted 60% AI, 40% historical engagement
-        history_weight = int(sender_engagement_score * 100)
+        score_val = sender_engagement_score if sender_engagement_score is not None else 0.5
+        history_weight = int(score_val * 100)
         final_score = int(0.6 * ai_priority_score + 0.4 * history_weight)
+
 
         if has_urgent_deadline:
             final_score = min(100, final_score + 25)

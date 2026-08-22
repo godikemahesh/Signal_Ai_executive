@@ -28,10 +28,20 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     frontend_url: str = "http://localhost:5173"
 
-    # --- Database ---
+    # --- Database & Persistence ---
+    database_backend: Literal["fabric", "postgres"] = "fabric"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/signal"
     supabase_url: str = ""
     supabase_anon_key: str = ""
+
+    # --- Microsoft Fabric ---
+    fabric_workspace_id: str = "60a962ae-2d89-4881-8dbd-f6b5b843d72b"
+    fabric_lakehouse_id: str = "ac486cd1-8dd5-40fe-b770-fe16d6f4a5d3"
+    fabric_sql_endpoint_id: str = "639815ab-55c7-444f-a7d5-f3d053b8b8bf"
+    fabric_sql_connection_string: str = "iix2bcztutkuvpnlaeb2dpc7uu-vzrksyejfwaurdn56223qq6xfm.datawarehouse.fabric.microsoft.com"
+    fabric_client_id: str = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+    fabric_authority: str = "https://login.microsoftonline.com/common"
+    fabric_token_cache_path: str = ""
 
     @field_validator("database_url", mode="before")
     @classmethod

@@ -17,10 +17,8 @@ from app.database import async_session_factory, close_db, init_db
 from app.models.gmail import GmailAccount
 from app.services.gmail_service import GmailService
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+from app.repositories import get_gmail_account_repository
+
 logger = logging.getLogger("signal")
 settings = get_settings()
 
@@ -32,10 +30,8 @@ async def periodic_gmail_poller():
         try:
             await asyncio.sleep(settings.gmail_poll_interval_seconds)
             async with async_session_factory() as db:
-                res = await db.execute(
-                    select(GmailAccount).where(GmailAccount.is_active == True)
-                )
-                accounts = list(res.scalars().all())
+                gmail_repo = get_gmail_account_repository(db=db)
+                accounts = await gmail_repo.list_active()
                 for acc in accounts:
                     if acc.access_token:
                         logger.info(f"Background worker syncing emails for: {acc.email}")
@@ -45,6 +41,7 @@ async def periodic_gmail_poller():
             break
         except Exception as e:
             logger.error(f"Error in background Gmail poller: {e}")
+
 
 
 @asynccontextmanager

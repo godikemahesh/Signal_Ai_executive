@@ -10,6 +10,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.entity import Entity, EntityTimelineEvent, SignalEntity
+from app.repositories import (
+    get_entity_repository,
+    get_entity_timeline_event_repository,
+    get_signal_entity_repository,
+)
 
 
 TRACKABLE_ENTITY_TYPES = {
@@ -118,6 +123,10 @@ class EntityService:
         signal_category: str = "",
     ):
         """Link or create entities from Tier 2 AI extraction with smart gatekeeping and merging."""
+        entity_repo = get_entity_repository(db=db)
+        sig_entity_repo = get_signal_entity_repository(db=db)
+        timeline_repo = get_entity_timeline_event_repository(db=db)
+
         for item in extracted_entities:
             if not EntityService.is_meaningful_timeline_entity(item, signal_subject, signal_category):
                 continue
@@ -142,10 +151,7 @@ class EntityService:
 
             # Smart Merging: Find existing entity by exact name or brand substring match
             name_lower = name.lower()
-            res = await db.execute(
-                select(Entity).where(Entity.user_id == user_id)
-            )
-            existing_entities = list(res.scalars().all())
+            existing_entities = await entity_repo.list_by_user(user_id)
 
             matched_entity = None
             for e in existing_entities:
@@ -172,8 +178,7 @@ class EntityService:
                     last_updated_at=received_at,
                     metadata_=item.get("metadata", {}),
                 )
-                db.add(entity)
-                await db.flush()
+                entity = await entity_repo.create(entity)
             else:
                 entity = matched_entity
                 entity.current_state = item.get("current_state") or entity.current_state
@@ -184,6 +189,7 @@ class EntityService:
                     current_meta = dict(entity.metadata_ or {})
                     current_meta.update({k: v for k, v in item["metadata"].items() if v is not None})
                     entity.metadata_ = current_meta
+                entity = await entity_repo.update(entity)
 
             # Link Signal to Entity
             sig_ent = SignalEntity(
@@ -192,7 +198,7 @@ class EntityService:
                 relationship_type="updated",
                 extracted_data=item,
             )
-            db.add(sig_ent)
+            await sig_entity_repo.create(sig_ent)
 
             # Add Timeline Event
             event = EntityTimelineEvent(
@@ -202,7 +208,6 @@ class EntityService:
                 event_date=received_at,
                 status="completed" if not item.get("next_action") else "action_required",
             )
-            db.add(event)
+            await timeline_repo.create(event)
 
-        await db.commit()
 

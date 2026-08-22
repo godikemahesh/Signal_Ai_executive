@@ -5,14 +5,15 @@ Signal operations: list, get, archive, snooze, trigger sync.
 
 from datetime import datetime, timezone
 from typing import Optional
+from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.signal import Signal
 from app.models.user import UserProfile
+from app.repositories import get_signal_repository
 from app.schemas.signal import SignalResponse
 from app.services.behavior_engine import BehaviorEngine
 from app.services.gmail_service import GmailService
@@ -29,17 +30,16 @@ async def list_signals(
     db: AsyncSession = Depends(get_db),
 ):
     """List signals with pagination and bucket filtering."""
-    query = select(Signal).where(Signal.user_id == user.id, Signal.is_deleted == False)
+    signal_repo = get_signal_repository(db=db)
     if bucket:
-        query = query.where(Signal.bucket == bucket)
-
-    query = query.order_by(Signal.received_at.desc()).limit(limit).offset(offset)
-    res = await db.execute(query)
-    signals = list(res.scalars().all())
+        signals = await signal_repo.list_by_bucket(user.id, bucket, is_deleted=False)
+        signals = signals[offset: offset + limit]
+    else:
+        signals = await signal_repo.list_by_user(
+            user.id, is_deleted=False, order_by="received_at", descending=True, limit=limit, offset=offset
+        )
     return [SignalResponse.model_validate(s) for s in signals]
 
-
-from uuid import UUID
 
 @router.get("/{signal_id}", response_model=SignalResponse)
 async def get_signal(
@@ -48,11 +48,9 @@ async def get_signal(
     db: AsyncSession = Depends(get_db),
 ):
     """Fetch single signal by ID."""
-    res = await db.execute(
-        select(Signal).where(Signal.id == signal_id, Signal.user_id == user.id)
-    )
-    signal = res.scalar_one_or_none()
-    if not signal:
+    signal_repo = get_signal_repository(db=db)
+    signal = await signal_repo.get_by_id(signal_id)
+    if not signal or str(signal.user_id) != str(user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Signal not found")
 
     # Record open interaction
@@ -70,11 +68,9 @@ async def archive_signal(
     db: AsyncSession = Depends(get_db),
 ):
     """Archive a signal."""
-    res = await db.execute(
-        select(Signal).where(Signal.id == signal_id, Signal.user_id == user.id)
-    )
-    signal = res.scalar_one_or_none()
-    if not signal:
+    signal_repo = get_signal_repository(db=db)
+    signal = await signal_repo.get_by_id(signal_id)
+    if not signal or str(signal.user_id) != str(user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Signal not found")
 
     signal.is_archived = True
@@ -83,9 +79,8 @@ async def archive_signal(
         db, user.id, signal.id, "archived", signal.sender_email
     )
 
-    await db.commit()
-    await db.refresh(signal)
-    return SignalResponse.model_validate(signal)
+    updated_signal = await signal_repo.update(signal)
+    return SignalResponse.model_validate(updated_signal)
 
 
 @router.post("/sync")
@@ -97,3 +92,4 @@ async def trigger_sync(
     """Trigger background Gmail sync."""
     background_tasks.add_task(GmailService.sync_recent_messages, db, user.id, 50)
     return {"message": "Gmail sync scheduled in background"}
+

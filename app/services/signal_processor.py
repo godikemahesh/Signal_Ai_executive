@@ -13,8 +13,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.llm_manager import get_llm_manager
 from app.ai.prompts.signal_analysis import SIGNAL_ANALYSIS_SYSTEM_INSTRUCTION, build_signal_analysis_prompt
 from app.core.constants import BUCKET_COMPLETED
-from app.models.signal import Signal, SignalEmbedding
+from app.models.signal import Signal, SignalEmbedding, SignalThread
 from app.models.user import UserProfile
+from app.repositories import (
+    get_signal_embedding_repository,
+    get_signal_repository,
+    get_signal_thread_repository,
+    get_user_repository,
+)
+
 from app.services.embedding_service import EmbeddingService
 from app.services.entity_service import EntityService
 from app.services.parser_engine import ParserEngine
@@ -36,13 +43,16 @@ class SignalProcessor:
         gmail_payload: dict[str, Any],
     ) -> Signal:
         """Process a raw Gmail API message payload through the 3-tier pipeline."""
+        signal_repo = get_signal_repository(db=db)
+        user_repo = get_user_repository(db=db)
+        embedding_repo = get_signal_embedding_repository(db=db)
+
         # Step 1: Parse raw email payload
         parsed = ParserEngine.parse_gmail_message(gmail_payload)
         gmail_msg_id = parsed["gmail_message_id"]
 
         # Check if already exists
-        existing_res = await db.execute(select(Signal).where(Signal.gmail_message_id == gmail_msg_id))
-        existing_signal = existing_res.scalar_one_or_none()
+        existing_signal = await signal_repo.get_by_gmail_message_id(gmail_msg_id)
         if existing_signal:
             logger.info(f"Signal {gmail_msg_id} already processed. Skipping.")
             return existing_signal
@@ -56,21 +66,15 @@ class SignalProcessor:
         gmail_thread_id = parsed["gmail_thread_id"]
 
         # Step 1.5: If message is sent by user (sent reply), automatically resolve signals in this thread
-        user = await db.get(UserProfile, user_id)
+        user = await user_repo.get_by_id(user_id)
         if user and sender_email.lower() == user.email.lower():
             logger.info(f"Detected sent reply from user {user.email} in thread {gmail_thread_id}. Resolving thread signals.")
-            thread_res = await db.execute(
-                select(Signal).where(
-                    Signal.user_id == user_id,
-                    Signal.gmail_thread_id == gmail_thread_id,
-                )
-            )
-            thread_signals = list(thread_res.scalars().all())
+            thread_signals = await signal_repo.list_by_thread(user_id, gmail_thread_id)
             for ts in thread_signals:
                 ts.bucket = BUCKET_COMPLETED
                 ts.is_archived = True
                 ts.interacted_at = datetime.now(timezone.utc)
-            await db.commit()
+            await signal_repo.bulk_update(thread_signals)
 
             try:
                 from app.api.websocket import ws_manager
@@ -103,7 +107,7 @@ class SignalProcessor:
                 gmail_thread_id=parsed["gmail_thread_id"],
                 sender_email=sender_email,
                 sender_name=sender_name,
-                sender_profile_id=sender_profile.id,
+                sender_profile_id=sender_profile.id if sender_profile else None,
                 to_recipients=parsed["to_recipients"],
                 cc_recipients=parsed["cc_recipients"],
                 subject=subject,
@@ -121,10 +125,29 @@ class SignalProcessor:
                 received_at=received_at,
                 processed_at=datetime.now(timezone.utc),
             )
-            db.add(signal)
-            await db.commit()
-            await db.refresh(signal)
-            return signal
+            created_signal = await signal_repo.create(signal)
+
+            if gmail_thread_id:
+                try:
+                    import uuid
+                    thread_repo = get_signal_thread_repository(db=db)
+                    th = SignalThread(
+                        id=uuid.uuid4(),
+                        user_id=user_id,
+                        gmail_thread_id=gmail_thread_id,
+                        subject=subject,
+                        participants=[sender_email] + parsed.get("to_recipients", []),
+                        last_signal_at=received_at,
+                        signal_count=1,
+                        is_active=True,
+                    )
+                    await thread_repo.upsert(th)
+                except Exception as th_err:
+                    logger.warning(f"Failed to upsert thread {gmail_thread_id}: {th_err}")
+
+
+            return created_signal
+
 
         # Step 4: Tier 2 — Full AI Processing
         logger.info(f"Signal {gmail_msg_id} sending to Tier 2 AI Processing")
@@ -151,7 +174,7 @@ class SignalProcessor:
         # Step 5: Compute priority & resolve bucket
         priority_score, bucket, bucket_reason = PriorityScorer.calculate_priority(
             ai_priority_score=ai_res.get("priority_score", 50),
-            sender_engagement_score=sender_profile.engagement_score,
+            sender_engagement_score=sender_profile.engagement_score if sender_profile else 0.5,
             has_urgent_deadline=bool(ai_res.get("actions")),
             is_marketing=ai_res.get("is_marketing_or_newsletter", False),
         )
@@ -163,7 +186,7 @@ class SignalProcessor:
             gmail_thread_id=parsed["gmail_thread_id"],
             sender_email=sender_email,
             sender_name=sender_name,
-            sender_profile_id=sender_profile.id,
+            sender_profile_id=sender_profile.id if sender_profile else None,
             to_recipients=parsed["to_recipients"],
             cc_recipients=parsed["cc_recipients"],
             subject=subject,
@@ -184,40 +207,59 @@ class SignalProcessor:
             received_at=received_at,
             processed_at=datetime.now(timezone.utc),
         )
-        db.add(signal)
-        await db.flush()
+        created_signal = await signal_repo.create(signal)
+
+        if gmail_thread_id:
+            try:
+                import uuid
+                thread_repo = get_signal_thread_repository(db=db)
+                th = SignalThread(
+                    id=uuid.uuid4(),
+                    user_id=user_id,
+                    gmail_thread_id=gmail_thread_id,
+                    subject=subject,
+                    participants=[sender_email] + parsed.get("to_recipients", []),
+                    last_signal_at=received_at,
+                    signal_count=1,
+                    is_active=True,
+                )
+                await thread_repo.upsert(th)
+            except Exception as th_err:
+                logger.warning(f"Failed to upsert thread {gmail_thread_id}: {th_err}")
+
 
         # Step 6: Process Entities & Timeline (Gatekept for meaningful threads: priority_score >= 40)
+
         is_marketing = ai_res.get("is_marketing_or_newsletter", False)
         suggested_cat = ai_res.get("suggested_category", "")
 
         if ai_res.get("entities") and bucket != "ignored" and priority_score >= 40 and not is_marketing:
-            await EntityService.process_extracted_entities(
-                db,
-                user_id,
-                signal.id,
-                ai_res["entities"],
-                received_at,
-                signal_subject=subject,
-                signal_category=suggested_cat,
-            )
+            try:
+                await EntityService.process_extracted_entities(
+                    db,
+                    user_id,
+                    created_signal.id,
+                    ai_res["entities"],
+                    received_at,
+                    signal_subject=subject,
+                    signal_category=suggested_cat,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to process extracted entities for signal {created_signal.id}: {e}")
 
         # Step 7: Generate & Store Embeddings for semantic search
         try:
-            embed_text = f"{subject}\n{signal.summary or ''}\n{body_plain[:500]}"
+            embed_text = f"{subject}\n{created_signal.summary or ''}\n{body_plain[:500]}"
             vector, model_name = EmbeddingService.get_embedding(embed_text)
 
             embedding_obj = SignalEmbedding(
-                signal_id=signal.id,
+                signal_id=created_signal.id,
                 embedding_model=model_name,
                 embedding=vector,
             )
-            db.add(embedding_obj)
+            await embedding_repo.create(embedding_obj)
         except Exception as e:
-            logger.warning(f"Failed to save embedding for signal {signal.id}: {e}")
-
-        await db.commit()
-        await db.refresh(signal)
+            logger.warning(f"Failed to save embedding for signal {created_signal.id}: {e}")
 
         # Broadcast real-time WebSocket update event to active UI clients
         try:
@@ -225,11 +267,12 @@ class SignalProcessor:
             await ws_manager.broadcast({
                 "type": "signal_updated",
                 "user_id": str(user_id),
-                "signal_id": str(signal.id),
-                "subject": signal.subject,
-                "bucket": signal.bucket,
+                "signal_id": str(created_signal.id),
+                "subject": created_signal.subject,
+                "bucket": created_signal.bucket,
             })
         except Exception as e:
             logger.warning(f"Failed to broadcast WebSocket event: {e}")
 
-        return signal
+        return created_signal
+

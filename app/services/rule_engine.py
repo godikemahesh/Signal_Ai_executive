@@ -39,11 +39,12 @@ class RuleEngine:
         # Tier 1: Known Newsletter / Notification rules
         if sender_profile.processing_tier == 1:
             category = "Newsletters" if sender_profile.sender_type == "newsletter" else "Notifications"
+            eng_score = sender_profile.engagement_score if sender_profile.engagement_score is not None else 0.5
             return {
                 "summary": f"{subject[:80]}..." if len(subject) > 80 else subject,
                 "suggested_category": category,
                 "priority_score": 30,
-                "suggested_bucket": "ignored" if sender_profile.engagement_score < 0.2 else "this_week",
+                "suggested_bucket": "ignored" if eng_score < 0.2 else "this_week",
                 "bucket_reason": f"Processed via rule engine for {sender_profile.sender_type} sender.",
                 "processing_tier": 1,
                 "skip_reason": "Tier 1 rule-based classification",
@@ -51,5 +52,6 @@ class RuleEngine:
                 "entities": [],
                 "is_marketing_or_newsletter": True,
             }
+
 
         return None

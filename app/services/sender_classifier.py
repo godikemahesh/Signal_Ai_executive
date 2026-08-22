@@ -4,10 +4,10 @@ Identifies blocklisted/marketing senders to skip expensive LLM API calls.
 """
 
 from typing import Optional
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.behavior import KnownDomain, SenderProfile
+from app.models.behavior import SenderProfile
+from app.repositories import get_known_domain_repository, get_sender_profile_repository
 
 
 class SenderClassifier:
@@ -24,20 +24,16 @@ class SenderClassifier:
         sender_email = sender_email.lower().strip()
         domain = sender_email.split("@")[-1] if "@" in sender_email else ""
 
-        # 1. Lookup existing profile
-        result = await db.execute(
-            select(SenderProfile).where(SenderProfile.email_address == sender_email)
-        )
-        profile = result.scalar_one_or_none()
+        sender_repo = get_sender_profile_repository(db=db)
 
+        # 1. Lookup existing profile
+        profile = await sender_repo.get_by_email(sender_email)
         if profile:
             return profile
 
-        # 2. Lookup known domain default tier
-        domain_res = await db.execute(
-            select(KnownDomain).where(KnownDomain.domain == domain)
-        )
-        known = domain_res.scalar_one_or_none()
+        # 2. Lookup known domain default tier via repository abstraction
+        domain_repo = get_known_domain_repository(db=db)
+        known = await domain_repo.get_by_domain(domain)
 
         default_type = known.default_sender_type if known else "unknown"
         default_tier = known.default_tier if known else 2
@@ -49,18 +45,22 @@ class SenderClassifier:
             sender_type=default_type,
             processing_tier=default_tier,
             confidence=0.8 if known else 0.0,
+            engagement_score=0.5,
+            total_received=0,
+            total_opened=0,
+            total_replied=0,
+            total_ignored=0,
+            total_archived=0,
+            consecutive_ignores=0,
+            avg_response_time_sec=0,
         )
+
+
         try:
-            db.add(profile)
-            await db.flush()
-            return profile
+            return await sender_repo.create(profile)
         except Exception:
-            await db.rollback()
-            result = await db.execute(
-                select(SenderProfile).where(SenderProfile.email_address == sender_email)
-            )
-            existing_prof = result.scalar_one_or_none()
+            existing_prof = await sender_repo.get_by_email(sender_email)
             if existing_prof:
                 return existing_prof
-            # If still not found, return detached profile
             return profile
+
